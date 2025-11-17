@@ -7,8 +7,9 @@ import os
 from collections import Counter
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from model import Seq2SeqTransformer, generate_masks
 
+from model import Seq2SeqTransformer, generate_masks
+from config import config
 
 spacy_en = spacy.load("en_core_web_sm")
 spacy_de = spacy.load("de_core_news_sm")
@@ -66,29 +67,20 @@ def get_collate_fn(pad_idx):
     return collate_fn
 
 if __name__ == "__main__":
-    FREEZE_ENCODER_MEMORY = False
-    mode = "frozen_encoder" if FREEZE_ENCODER_MEMORY else "baseline"
+    mode = config['mode']
     print(f"--- RUNNING IN '{mode.upper()}' MODE (EN -> DE) ---")
 
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    BATCH_SIZE = 64
-    LEARNING_RATE = 1e-4
-    EPOCHS = 100
-    D_MODEL = 256
-    NHEAD = 4
-    NUM_ENCODER_LAYERS = 3
-    NUM_DECODER_LAYERS = 3
-    DIM_FEEDFORWARD = 1024
+    DEVICE = config['device']
     
-    data_dir = ".data"
+    data_dir = config['data_dir']
     with open(os.path.join(data_dir, "train.de"), 'r', encoding='utf-8') as f:
         de_sents = f.read().strip().split('\n')
     with open(os.path.join(data_dir, "train.en"), 'r', encoding='utf-8') as f:
         en_sents = f.read().strip().split('\n')
         
-    specials = ["<unk>", "<pad>", "<sos>", "<eos>"]
-    de_vocab = Vocab(tokenize_de, de_sents, specials, min_freq=1)
-    en_vocab = Vocab(tokenize_en, en_sents, specials, min_freq=1)
+    specials = config['specials']
+    de_vocab = Vocab(tokenize_de, de_sents, specials, min_freq=config['min_freq'])
+    en_vocab = Vocab(tokenize_en, en_sents, specials, min_freq=config['min_freq'])
     PAD_IDX = en_vocab.stoi["<pad>"]
     
     print(f"Device: {DEVICE}")
@@ -98,17 +90,20 @@ if __name__ == "__main__":
     train_dataset = TranslationDataset(data_dir, de_vocab=de_vocab, en_vocab=en_vocab, mode='train')
     val_dataset = TranslationDataset(data_dir, de_vocab=de_vocab, en_vocab=en_vocab, mode='val')
     
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=get_collate_fn(PAD_IDX))
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=get_collate_fn(PAD_IDX))
+    collate_fn = get_collate_fn(PAD_IDX)
+    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False, collate_fn=collate_fn)
     
     model = Seq2SeqTransformer(
         src_vocab_size=len(en_vocab),
         tgt_vocab_size=len(de_vocab),
-        d_model=D_MODEL, nhead=NHEAD,
-        num_encoder_layers=NUM_ENCODER_LAYERS,
-        num_decoder_layers=NUM_DECODER_LAYERS,
-        dim_feedforward=DIM_FEEDFORWARD,
-        freeze_encoder=FREEZE_ENCODER_MEMORY
+        d_model=config['d_model'], 
+        nhead=config['nhead'],
+        num_encoder_layers=config['num_encoder_layers'],
+        num_decoder_layers=config['num_decoder_layers'],
+        dim_feedforward=config['dim_feedforward'],
+        dropout=config['dropout'],
+        freeze_encoder=config['freeze_encoder']
     ).to(DEVICE)
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -117,14 +112,14 @@ if __name__ == "__main__":
     print(f"Trainable parameters: {trainable_params/1e6:.2f}M")
 
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=LEARNING_RATE)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config['learning_rate'])
     
     train_losses, val_losses = [], []
     try:
-        for epoch in range(EPOCHS):
+        for epoch in range(config['epochs']):
             epoch_train_loss, epoch_val_loss = 0, 0
             total_steps = len(train_loader) + len(val_loader)
-            with tqdm(total=total_steps, desc=f"Epoch {epoch+1}/{EPOCHS}") as pbar:
+            with tqdm(total=total_steps, desc=f"Epoch {epoch+1}/{config['epochs']}") as pbar:
                 model.train()
                 for src, tgt in train_loader:
                     src, tgt = src.to(DEVICE), tgt.to(DEVICE)
@@ -158,16 +153,16 @@ if __name__ == "__main__":
             val_losses.append(avg_epoch_val_loss)
             print(f"Epoch {epoch+1} Summary: Avg Train Loss: {avg_epoch_train_loss:.4f} | Avg Val Loss: {avg_epoch_val_loss:.4f}")
         
-        with open(f"epoch_losses_{mode}.txt", "w") as f:
+        with open(config['loss_log_path'].format(mode=mode), "w") as f:
             for tl, vl in zip(train_losses, val_losses):
                 f.write(f"{tl},{vl}\n")
     except KeyboardInterrupt:
         print("\n\nTraining interrupted. Saving artifacts...")
 
     print("\n--- Saving model and vocab ---")
-    torch.save(model.state_dict(), f"model_{mode}.pt")
-    torch.save(de_vocab, "vocab_de.pt")
-    torch.save(en_vocab, "vocab_en.pt")
+    torch.save(model.state_dict(), config['model_save_path'].format(mode=mode))
+    torch.save(de_vocab, config['vocab_de_path'])
+    torch.save(en_vocab, config['vocab_en_path'])
 
     if train_losses and val_losses:
         plt.figure(figsize=(10, 5))
@@ -175,5 +170,5 @@ if __name__ == "__main__":
         plt.plot(val_losses, label="Validation Loss")
         plt.title(f"Training and Validation Loss ({mode})")
         plt.xlabel("Epoch"), plt.ylabel("Loss"), plt.legend(), plt.grid(True)
-        plt.savefig(f"loss_plot_{mode}.png")
-        print(f"\nSaved loss plot to 'loss_plot_{mode}.png'")
+        plt.savefig(config['loss_plot_path'].format(mode=mode))
+        print(f"\nSaved loss plot to '{config['loss_plot_path'].format(mode=mode)}'")
