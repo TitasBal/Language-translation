@@ -82,10 +82,8 @@ if __name__ == "__main__":
     try:
         for epoch in range(config['epochs']):
             epoch_train_loss, epoch_val_loss = 0, 0
-            
-            # --- START of KeyboardInterrupt FIX ---
-            pbar = tqdm(total=len(train_loader) + len(val_loader), desc=f"Epoch {epoch+1}/{config['epochs']}")
-            try:
+            total_steps = len(train_loader) + len(val_loader)
+            with tqdm(total=total_steps, desc=f"Epoch {epoch+1}/{config['epochs']}") as pbar:
                 model.train()
                 for src, tgt in train_loader:
                     src, tgt = src.to(DEVICE), tgt.to(DEVICE)
@@ -112,11 +110,9 @@ if __name__ == "__main__":
                         epoch_val_loss += loss.item()
                         pbar.set_postfix(val_loss=f"{loss.item():.4f}")
                         pbar.update(1)
-            finally:
-                pbar.close()
 
-            avg_epoch_train_loss = epoch_train_loss / len(train_loader) if len(train_loader) > 0 else 0
-            avg_epoch_val_loss = epoch_val_loss / len(val_loader) if len(val_loader) > 0 else 0
+            avg_epoch_train_loss = epoch_train_loss / len(train_loader)
+            avg_epoch_val_loss = epoch_val_loss / len(val_loader)
             train_losses.append(avg_epoch_train_loss)
             val_losses.append(avg_epoch_val_loss)
             print(f"Epoch {epoch+1} Summary: Avg Train Loss: {avg_epoch_train_loss:.4f} | Avg Val Loss: {avg_epoch_val_loss:.4f}")
