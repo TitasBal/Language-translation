@@ -66,6 +66,28 @@ def get_collate_fn(pad_idx):
         return en_padded, de_padded
     return collate_fn
 
+def save_artifacts(model, de_vocab, en_vocab, train_losses, val_losses, config):
+    mode = config['mode']
+    print("\n--- Saving artifacts ---")
+    
+    torch.save(model.state_dict(), config['model_save_path'].format(mode=mode))
+    torch.save(de_vocab, config['vocab_de_path'])
+    torch.save(en_vocab, config['vocab_en_path'])
+    print(f"Saved model and vocabs.")
+
+    if train_losses and val_losses:
+        with open(config['loss_log_path'].format(mode=mode), "w") as f:
+            for tl, vl in zip(train_losses, val_losses):
+                f.write(f"{tl},{vl}\n")
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(train_losses, label="Training Loss")
+        plt.plot(val_losses, label="Validation Loss")
+        plt.title(f"Training and Validation Loss ({mode})")
+        plt.xlabel("Epoch"), plt.ylabel("Loss"), plt.legend(), plt.grid(True)
+        plt.savefig(config['loss_plot_path'].format(mode=mode))
+        print(f"Saved loss logs and plot to '{config['run_dir']}'")
+
 if __name__ == "__main__":
     mode = config['mode']
     print(f"--- RUNNING IN '{mode.upper()}' MODE (EN -> DE) ---")
@@ -152,23 +174,9 @@ if __name__ == "__main__":
             train_losses.append(avg_epoch_train_loss)
             val_losses.append(avg_epoch_val_loss)
             print(f"Epoch {epoch+1} Summary: Avg Train Loss: {avg_epoch_train_loss:.4f} | Avg Val Loss: {avg_epoch_val_loss:.4f}")
-        
-        with open(config['loss_log_path'].format(mode=mode), "w") as f:
-            for tl, vl in zip(train_losses, val_losses):
-                f.write(f"{tl},{vl}\n")
+    
     except KeyboardInterrupt:
-        print("\n\nTraining interrupted. Saving artifacts...")
-
-    print("\n--- Saving model and vocab ---")
-    torch.save(model.state_dict(), config['model_save_path'].format(mode=mode))
-    torch.save(de_vocab, config['vocab_de_path'])
-    torch.save(en_vocab, config['vocab_en_path'])
-
-    if train_losses and val_losses:
-        plt.figure(figsize=(10, 5))
-        plt.plot(train_losses, label="Training Loss")
-        plt.plot(val_losses, label="Validation Loss")
-        plt.title(f"Training and Validation Loss ({mode})")
-        plt.xlabel("Epoch"), plt.ylabel("Loss"), plt.legend(), plt.grid(True)
-        plt.savefig(config['loss_plot_path'].format(mode=mode))
-        print(f"\nSaved loss plot to '{config['loss_plot_path'].format(mode=mode)}'")
+        print("\n\nTraining interrupted by user.")
+    
+    finally:
+        save_artifacts(model, de_vocab, en_vocab, train_losses, val_losses, config)
