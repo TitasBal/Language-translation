@@ -6,17 +6,15 @@ import matplotlib.pyplot as plt
 import os
 from model import Seq2SeqTransformer, generate_masks
 from config import config
-from vocabulary import Vocab, tokenize_de, tokenize_en
+from vocabulary import load_tokenizer
 from dataset import TranslationDataset, get_collate_fn
 
-def save_artifacts(model, de_vocab, en_vocab, train_losses, val_losses, config):
+def save_artifacts(model, train_losses, val_losses, config):
     mode = config['mode']
     print("\n--- Saving artifacts ---")
-    
+
     torch.save(model.state_dict(), config['model_save_path'].format(mode=mode))
-    torch.save(de_vocab, config['vocab_de_path'])
-    torch.save(en_vocab, config['vocab_en_path'])
-    print(f"Saved model and vocabs.")
+    print(f"Saved model state.")
 
     if train_losses and val_losses:
         with open(config['loss_log_path'].format(mode=mode), "w") as f:
@@ -38,29 +36,23 @@ if __name__ == "__main__":
     
     print(f"--- RUNNING IN '{mode.upper()}' MODE (EN -> DE) ---")
 
-    with open(os.path.join(data_dir, "train.de"), 'r', encoding='utf-8') as f:
-        de_sents = f.read().strip().split('\n')
-    with open(os.path.join(data_dir, "train.en"), 'r', encoding='utf-8') as f:
-        en_sents = f.read().strip().split('\n')
-        
-    de_vocab = Vocab(tokenize_de, de_sents, config['specials'], config['min_freq'])
-    en_vocab = Vocab(tokenize_en, en_sents, config['specials'], config['min_freq'])
-    PAD_IDX = en_vocab.stoi["<pad>"]
+    tokenizer = load_tokenizer(config['tokenizer_path'])
+    PAD_IDX = tokenizer.token_to_id("<pad>")
+    vocab_size = tokenizer.get_vocab_size()
     
     print(f"Device: {DEVICE}")
-    print(f"English (Source) Vocab Size: {len(en_vocab)}")
-    print(f"German (Target) Vocab Size: {len(de_vocab)}")
+    print(f"Tokenizer vocabulary size: {vocab_size}")
     
-    train_dataset = TranslationDataset(data_dir, de_vocab=de_vocab, en_vocab=en_vocab, mode='train')
-    val_dataset = TranslationDataset(data_dir, de_vocab=de_vocab, en_vocab=en_vocab, mode='val')
+    train_dataset = TranslationDataset(data_dir, tokenizer=tokenizer, mode='train')
+    val_dataset = TranslationDataset(data_dir, tokenizer=tokenizer, mode='val')
     
     collate_fn = get_collate_fn(PAD_IDX)
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=config['batch_size'], shuffle=False, collate_fn=collate_fn)
     
     model = Seq2SeqTransformer(
-        src_vocab_size=len(en_vocab),
-        tgt_vocab_size=len(de_vocab),
+        src_vocab_size=vocab_size,
+        tgt_vocab_size=vocab_size, 
         d_model=config['d_model'], 
         nhead=config['nhead'],
         num_encoder_layers=config['num_encoder_layers'],
@@ -79,6 +71,10 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config['learning_rate'])
     
     train_losses, val_losses = [], []
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+    patience = 5
+
     try:
         for epoch in range(config['epochs']):
             epoch_train_loss, epoch_val_loss = 0, 0
@@ -116,9 +112,20 @@ if __name__ == "__main__":
             train_losses.append(avg_epoch_train_loss)
             val_losses.append(avg_epoch_val_loss)
             print(f"Epoch {epoch+1} Summary: Avg Train Loss: {avg_epoch_train_loss:.4f} | Avg Val Loss: {avg_epoch_val_loss:.4f}")
+
+            if avg_epoch_val_loss < best_val_loss:
+                best_val_loss = avg_epoch_val_loss
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+                print(f"Early Stopping Counter: {epochs_no_improve} of {patience}")
+
+            if epochs_no_improve >= patience:
+                print(f"\nValidation loss has not improved for {patience} epochs. Triggering early stopping.")
+                break
     
     except KeyboardInterrupt:
         print("\n\nTraining interrupted by user.")
     
     finally:
-        save_artifacts(model, de_vocab, en_vocab, train_losses, val_losses, config)
+        save_artifacts(model, train_losses, val_losses, config)
