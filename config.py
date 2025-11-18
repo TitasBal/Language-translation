@@ -17,18 +17,18 @@ os.makedirs(run_dir, exist_ok=True)
 
 config = {
     "run_number": run_number,
-    "mode": "baseline",
-    "freeze_encoder": False,
+    "mode": "baseline", # Baseline or frozen_encoder
+    "freeze_encoder": False, # Set True for the frozen encoder
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     
-    "data_dir": ".data",
-    "specials": ["<unk>", "<pad>", "<sos>", "<eos>"],
-    "min_freq": 1,
+    "tokenizer_path": "tokenizers/tokenizer.json",
+    "data_dir": ".\.data",
+    "vocab_size": 30000,
 
-    "d_model": 256,
-    "nhead": 4,
-    "num_encoder_layers": 3,
-    "num_decoder_layers": 3,
+    "d_model": 258,
+    "nhead": 6,
+    "num_encoder_layers": 4,
+    "num_decoder_layers": 4,
     "dim_feedforward": 1024,
     "dropout": 0.1,
 
